@@ -55,7 +55,8 @@ word_listf = [
 
 def clean_text(input_string):
     """특수문자 제거"""
-    text_rmv = re.sub(r'[-=+,#/\?:^.@*\"※~ㆍ!』' |\(\)\[\]$`\'…%&><》\"\"\'·.~_;]', ' ', input_string)
+    # 특수문자 제거 (정규표현식 수정)
+    text_rmv = re.sub(r'[^\w\s가-힣]', ' ', input_string)
     return text_rmv
 
 
@@ -66,17 +67,17 @@ def process_blog_text(text):
     linea2 = str(linea1)
     line1 = clean_text(linea2)
     line2 = line1.replace(" ", "")
-
+    
     # 금칙어 검사
     penlistf = []
     for word in sorted(word_listf):
         count = line2.count(word)
         if count > 0:
             penlistf.append({"word": word, "count": count})
-
+    
     # 총 글자수
     total_chars = len(line2)
-
+    
     return {
         "cleaned_text": line2,
         "total_chars": total_chars,
@@ -89,19 +90,19 @@ def process_blog_url(url):
     # 모바일 URL로 변경
     if 'm.blog' not in url:
         url = url.replace('blog', 'm.blog')
-
+    
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
     except Exception as e:
         return {"error": f"URL 요청 실패: {e}"}
-
+    
     soup = BeautifulSoup(response.text, "html.parser")
     container = soup.select_one("div.se-main-container")
-
+    
     if container is None:
         return {"error": "블로그 본문을 찾을 수 없습니다. URL을 확인해주세요."}
-
+    
     text = container.get_text().replace("\n", "")
     return process_blog_text(text)
 
@@ -120,12 +121,12 @@ st.markdown("---")
 # URL 입력 모드
 if input_mode == "블로그 URL":
     blog_url = st.text_input("블로그 URL", placeholder="https://blog.naver.com/...")
-
+    
     if st.button("분석 시작", type="primary"):
         if blog_url:
             with st.spinner("분석 중..."):
                 result = process_blog_url(blog_url)
-
+            
             if "error" in result:
                 st.error(result["error"])
             else:
@@ -140,9 +141,9 @@ if input_mode == "블로그 URL":
                         st.metric("메인키워드", f"{keyword_count}회")
                 with col3:
                     st.metric("금칙어 종류", f"{len(result['penlistf'])}개")
-
+                
                 st.markdown("---")
-
+                
                 # 금칙어 검사 결과
                 st.subheader("금칙어 검사 결과")
                 if result["penlistf"]:
@@ -151,7 +152,7 @@ if input_mode == "블로그 URL":
                         st.write(f"• **{item['word']}**: {item['count']}회")
                 else:
                     st.success("✅ 금칙어 없음")
-
+                
                 # 원본 텍스트
                 with st.expander("처리된 텍스트 보기"):
                     st.text_area("", result["cleaned_text"], height=200)
@@ -161,12 +162,12 @@ if input_mode == "블로그 URL":
 # 텍스트 직접 입력 모드
 else:
     blog_text = st.text_area("텍스트 입력", height=300, placeholder="블로그 글을 붙여넣으세요...")
-
+    
     if st.button("분석 시작", type="primary"):
         if blog_text:
             with st.spinner("분석 중..."):
                 result = process_blog_text(blog_text)
-
+            
             # 기본 정보
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -178,9 +179,9 @@ else:
                     st.metric("메인키워드", f"{keyword_count}회")
             with col3:
                 st.metric("금칙어 종류", f"{len(result['penlistf'])}개")
-
+            
             st.markdown("---")
-
+            
             # 금칙어 검사 결과
             st.subheader("금칙어 검사 결과")
             if result["penlistf"]:
@@ -189,7 +190,7 @@ else:
                     st.write(f"• **{item['word']}**: {item['count']}회")
             else:
                 st.success("✅ 금칙어 없음")
-
+            
             # 원본 텍스트
             with st.expander("처리된 텍스트 보기"):
                 st.text_area("", result["cleaned_text"], height=200)
