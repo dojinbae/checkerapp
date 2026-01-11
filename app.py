@@ -2,13 +2,26 @@ import streamlit as st
 import requests
 import re
 from bs4 import BeautifulSoup
+from collections import Counter
+# 한국어 형태소 분석기 '키위'를 가져옵니다
+from kiwipiepy import Kiwi
+import pandas as pd
 
 # 페이지 설정
 st.set_page_config(
-    page_title="금칙어 검사기",
-    page_icon="🔍",
-    layout="centered"
+    page_title="블로그 키워드 분석기",
+    page_icon="📊",
+    layout="wide"  # 화면을 넓게 쓰기 위해 wide로 변경
 )
+
+
+# 형태소 분석기 준비 (한 번만 로딩)
+@st.cache_resource
+def load_kiwi():
+    return Kiwi()
+
+
+kiwi = load_kiwi()
 
 # 금칙어 리스트
 word_listf = [
@@ -248,60 +261,85 @@ word_listf = [
 
 def clean_text(input_string):
     """특수문자 제거"""
-    # 특수문자 제거 (정규표현식 수정)
     text_rmv = re.sub(r'[^\w\s가-힣]', ' ', input_string)
     return text_rmv
+
+
+def analyze_keywords(text):
+    """형태소 분석을 통한 키워드 추출 함수"""
+    # 1. 형태소 분석 실행
+    results = kiwi.analyze(text)
+
+    # 2. 명사(NNG:일반명사, NNP:고유명사)만 추출
+    nouns = []
+    for token, pos, _, _ in results[0][0]:
+        if pos in ['NNG', 'NNP'] and len(token) > 1:  # 한 글자짜리 단어는 제외 (예: 것, 수, 등)
+            nouns.append(token)
+
+    # 3. 빈도수 계산
+    count = Counter(nouns)
+
+    # 4. 가장 많이 나온 단어 20개 추출
+    most_common = count.most_common(20)
+
+    return most_common
 
 
 def process_blog_text(text):
     """블로그 텍스트 분석"""
     # 텍스트 전처리
-    linea1 = text.replace("\n", "").replace("출처 입력", "").replace("사진 설명을 입력하세요", "")
+    linea1 = text.replace("\n", " ").replace("출처 입력", "").replace("사진 설명을 입력하세요", "")
     linea2 = str(linea1)
     line1 = clean_text(linea2)
+
+    # 금칙어 검사를 위한 공백 제거 버전
     line2 = line1.replace(" ", "")
-    
+
     # 금칙어 검사
     penlistf = []
     for word in sorted(word_listf):
         count = line2.count(word)
         if count > 0:
             penlistf.append({"word": word, "count": count})
-    
+
+    # 키워드 분석 실행 (공백이 있는 원본 텍스트 사용)
+    keywords = analyze_keywords(line1)
+
     # 총 글자수
     total_chars = len(line2)
-    
+
     return {
-        "cleaned_text": line2,
+        "cleaned_text": line1,  # 가독성을 위해 띄어쓰기 있는 버전 반환
         "total_chars": total_chars,
-        "penlistf": penlistf
+        "penlistf": penlistf,
+        "keywords": keywords
     }
 
 
 def process_blog_url(url):
     """블로그 URL에서 텍스트 추출"""
-    # 모바일 URL로 변경
     if 'm.blog' not in url:
         url = url.replace('blog', 'm.blog')
-    
+
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
     except Exception as e:
         return {"error": f"URL 요청 실패: {e}"}
-    
+
     soup = BeautifulSoup(response.text, "html.parser")
     container = soup.select_one("div.se-main-container")
-    
+
     if container is None:
         return {"error": "블로그 본문을 찾을 수 없습니다. URL을 확인해주세요."}
-    
-    text = container.get_text().replace("\n", "")
+
+    text = container.get_text().replace("\n", " ")
     return process_blog_text(text)
 
 
 # ==================== 메인 앱 ====================
-st.title("🔍 금칙어 검사기")
+st.title("📊 블로그 키워드 & 금칙어 분석기")
+st.caption("플랜에이전시 마케팅 전략 도구")
 
 # 메인 키워드 입력
 main_keyword = st.text_input("메인 키워드 (선택)", placeholder="예: 다이어트")
@@ -311,86 +349,78 @@ input_mode = st.radio("입력 방식", ("블로그 URL", "직접 입력"), horiz
 
 st.markdown("---")
 
-# URL 입력 모드
+# 실행 로직
+result = None
+
 if input_mode == "블로그 URL":
     blog_url = st.text_input("블로그 URL", placeholder="https://blog.naver.com/...")
-    
     if st.button("분석 시작", type="primary"):
         if blog_url:
-            with st.spinner("분석 중..."):
+            with st.spinner("블로그를 분석하고 있습니다..."):
                 result = process_blog_url(blog_url)
-            
-            if "error" in result:
-                st.error(result["error"])
-            else:
-                # 기본 정보
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("총 글자수", f"{result['total_chars']:,}자")
-                with col2:
-                    if main_keyword:
-                        keyword_clean = main_keyword.replace(" ", "")
-                        keyword_count = result["cleaned_text"].count(keyword_clean)
-                        st.metric("메인키워드", f"{keyword_count}회")
-                with col3:
-                    st.metric("금칙어 종류", f"{len(result['penlistf'])}개")
-                
-                st.markdown("---")
-                
-                # 금칙어 검사 결과
-                st.subheader("금칙어 검사 결과")
-                if result["penlistf"]:
-                    st.warning(f"{len(result['penlistf'])}개의 금칙어 발견!")
-                    for item in result["penlistf"]:
-                        st.write(f"• **{item['word']}**: {item['count']}회")
-                else:
-                    st.success("✅ 금칙어 없음")
-                
-                # 원본 텍스트
-                with st.expander("처리된 텍스트 보기"):
-                    st.text_area("", result["cleaned_text"], height=200)
         else:
             st.warning("URL을 입력해주세요")
 
-# 텍스트 직접 입력 모드
 else:
     blog_text = st.text_area("텍스트 입력", height=300, placeholder="블로그 글을 붙여넣으세요...")
-    
     if st.button("분석 시작", type="primary"):
         if blog_text:
-            with st.spinner("분석 중..."):
+            with st.spinner("텍스트를 분석하고 있습니다..."):
                 result = process_blog_text(blog_text)
-            
-            # 기본 정보
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("총 글자수", f"{result['total_chars']:,}자")
-            with col2:
-                if main_keyword:
-                    keyword_clean = main_keyword.replace(" ", "")
-                    keyword_count = result["cleaned_text"].count(keyword_clean)
-                    st.metric("메인키워드", f"{keyword_count}회")
-            with col3:
-                st.metric("금칙어 종류", f"{len(result['penlistf'])}개")
-            
-            st.markdown("---")
-            
-            # 금칙어 검사 결과
-            st.subheader("금칙어 검사 결과")
-            if result["penlistf"]:
-                st.warning(f"{len(result['penlistf'])}개의 금칙어 발견!")
-                for item in result["penlistf"]:
-                    st.write(f"• **{item['word']}**: {item['count']}회")
-            else:
-                st.success("✅ 금칙어 없음")
-            
-            # 원본 텍스트
-            with st.expander("처리된 텍스트 보기"):
-                st.text_area("", result["cleaned_text"], height=200)
         else:
             st.warning("텍스트를 입력해주세요")
 
+# 결과 출력 화면
+if result:
+    if "error" in result:
+        st.error(result["error"])
+    else:
+        # 1. 상단 요약 지표
+        st.subheader("📋 분석 요약")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("총 글자수 (공백제외)", f"{result['total_chars']:,}자")
+        with col2:
+            if main_keyword:
+                keyword_clean = main_keyword.replace(" ", "")
+                keyword_count = result["cleaned_text"].replace(" ", "").count(keyword_clean)
+                st.metric(f"메인키워드 '{main_keyword}'", f"{keyword_count}회")
+            else:
+                st.metric("메인키워드", "-")
+        with col3:
+            st.metric("발견된 금칙어", f"{len(result['penlistf'])}개")
 
+        st.markdown("---")
 
+        # 2. 키워드 분석 (핵심 기능 추가)
+        st.subheader("🏆 가장 많이 사용된 단어 TOP 20")
 
+        # 데이터프레임 만들기
+        if result['keywords']:
+            df = pd.DataFrame(result['keywords'], columns=['단어', '빈도수'])
 
+            # 그래프와 표를 양옆으로 배치
+            k_col1, k_col2 = st.columns([2, 1])
+
+            with k_col1:
+                st.bar_chart(df.set_index('단어'))  # 막대 그래프
+
+            with k_col2:
+                st.dataframe(df, hide_index=True, use_container_width=True)  # 순위표
+        else:
+            st.info("분석할 명사가 충분하지 않습니다.")
+
+        st.markdown("---")
+
+        # 3. 금칙어 상세 내용
+        st.subheader("⚠️ 금칙어 검사 상세")
+        if result["penlistf"]:
+            st.error(f"주의! {len(result['penlistf'])}개의 금칙어가 발견되었습니다.")
+            for item in result["penlistf"]:
+                st.write(f"• **{item['word']}**: {item['count']}회")
+        else:
+            st.success("✅ 금칙어가 발견되지 않았습니다. 안전한 글입니다!")
+
+        # 4. 원본 텍스트 확인
+        with st.expander("분석된 텍스트 원본 보기"):
+            st.text_area("", result["cleaned_text"], height=150)
